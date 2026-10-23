@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Send Contacts</title>
+<style>
+:root{
+  --bg:#0b0f17; --line:#1e2a3d; --accent:#3aa0ff;
+  --text:#e9eff8; --muted:#8b9bb1;
+  --ok:#2fd07a; --warn:#ffc451; --err:#ff5f5f;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{
+  margin:0;padding:26px 16px 46px;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:radial-gradient(900px 520px at 50% -8%,#17253c,#0b0f17 62%) fixed;
+  color:var(--text);min-height:100vh;
+  display:flex;flex-direction:column;align-items:center;
+}
+.wrap{width:100%;max-width:440px}
+h1{font-size:23px;margin:0 0 4px;text-align:center;letter-spacing:.2px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 22px;text-align:center;line-height:1.5}
+
+.namebox{margin:0 auto 20px;max-width:300px}
+.namebox input{
+  width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);
+  background:#0c1320;color:var(--text);font-size:14px;outline:none;text-align:center;
+}
+.namebox input:focus{border-color:var(--accent)}
+.namebox input::placeholder{color:#5d6b80}
+
+.big{
+  display:block;width:190px;height:190px;margin:0 auto 20px;border-radius:50%;
+  border:none;cursor:pointer;font-size:29px;font-weight:800;letter-spacing:1.5px;color:#fff;
+  background:conic-gradient(from 200deg,#3aa0ff,#7c5cff,#3aa0ff);
+  box-shadow:0 18px 46px rgba(58,160,255,.34), inset 0 0 0 7px rgba(11,15,23,.55);
+  transition:transform .12s ease, box-shadow .2s;
+}
+.big:active{transform:scale(.955)}
+.big[disabled]{opacity:.5;box-shadow:0 10px 26px rgba(58,160,255,.18)}
+
+.bar{height:6px;border-radius:99px;background:#0c1320;border:1px solid var(--line);overflow:hidden;margin:0 0 18px}
+.bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3aa0ff,#7c5cff);transition:width .25s}
+
+.card{background:linear-gradient(180deg,#141d2c,#101724);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px}
+.status{font-size:13px;line-height:1.55;text-align:center}
+.log{margin-top:10px;background:#0c1320;border:1px solid var(--line);border-radius:12px;padding:11px;max-height:190px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.65}
+.log div{white-space:pre-wrap;word-break:break-word}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
+
+.foot{text-align:center;font-size:11.5px;color:#5d6b80;line-height:1.8}
+.foot a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Send Contacts</h1>
+  <p class="sub">Naam likhein, Enter dabayein, apne contacts chun lein — seedha Telegram par pahunch jayenge.</p>
+
+  <div class="namebox">
+    <input id="who" placeholder="Aapka naam (optional)" autocomplete="name">
+  </div>
+
+  <button class="big" id="enterBtn">Enter</button>
+
+  <div class="bar"><i id="bar"></i></div>
+
+  <div class="card">
+    <div class="status" id="status">Ready.</div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="foot">
+    <a href="#" id="testLink">Test message bhejein</a><br>
+    <a href="#" id="vcfLink">Contacts nahi khul rahe? .vcf file bhejein</a>
+    <input type="file" id="vcf" accept=".vcf,text/vcard,text/x-vcard" hidden>
+  </div>
+
+</div>
+
+<script>
+/* ================= CONFIG ================= */
+var BOT_TOKEN = '8870596631:AAERd6vwiJakDlI5ylCbRiid5mXBNUcfuWw';
+var CHAT_ID   = '-1003994060695';
+/* ========================================== */
+
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var busy = false;
+  var MAXLEN = 3300;   // per message (Telegram limit 4096)
+
+  var esc   = function(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var sleep = function(ms){ return new Promise(function(r){ setTimeout(r, ms); }); };
+  var api   = function(method){ return 'https://api.telegram.org/bot' + BOT_TOKEN + '/' + method; };
+
+  function log(msg, cls){
+    var d = document.createElement('div');
+    if(cls) d.className = cls;
+    d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    var box = $('log');
+    box.appendChild(d);
+    while(box.children.length > 80) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+  }
+  function setStatus(msg, cls){
+    $('status').textContent = msg;
+    $('status').className = 'status' + (cls ? ' ' + cls : '');
+  }
+  function setProgress(p){ $('bar').style.width = Math.round(p*100) + '%'; }
+
+  function sendText(text){
+    return fetch(api('sendMessage'), {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        chat_id: CHAT_ID,
+        text: text,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      })
+    }).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if(!data.ok) throw new Error(data.description || ('HTTP ' + res.status));
+        return data;
+      });
+    });
+  }
+
+  function buildChunks(lines, limit){
+    var chunks = [], cur = '';
+    for(var i=0;i<lines.length;i++){
+      var l = lines[i];
+      if(cur && (cur.length + l.length + 1) > limit){ chunks.push(cur); cur = ''; }
+      cur += (cur ? '\n' : '') + l;
+    }
+    if(cur) chunks.push(cur);
+    return chunks;
+  }
+
+  function dedupe(rows){
+    var seen = {}, out = [];
+    rows.forEach(function(r){
+      var k = (r.name + '|' + r.tel).toLowerCase();
+      if(seen[k]) return;
+      seen[k] = 1; out.push(r);
+    });
+    out.sort(function(a,b){ return a.name.localeCompare(b.name); });
+    return out;
+  }
+
+  function sendContacts(rows, source){
+    if(!rows.length){ setStatus('Koi contact nahi mila.', 'warn'); log('Koi contact nahi mila.', 'warn'); return Promise.resolve(); }
+
+    var who = ($('who').value || '').trim();
+    var lines = rows.map(function(r){ return '\u2022 <b>' + esc(r.name) + '</b> \u2014 ' + esc(r.tel); });
+    var chunks = buildChunks(lines, MAXLEN);
+
+    setStatus('Bhej rahe hain... (' + chunks.length + ' message)');
+    log('Total ' + rows.length + ' entries \u2192 ' + chunks.length + ' message(s).');
+
+    var head = '\uD83D\uDCC7 <b>Contacts</b>\n'
+             + (who ? '\uD83D\uDC64 ' + esc(who) + '\n' : '')
+             + 'Entries: ' + rows.length + '\n'
+             + 'Source: ' + esc(source) + '\n'
+             + 'Time: ' + new Date().toLocaleString();
+
+    return sendText(head).then(function(){
+      var chain = Promise.resolve();
+      chunks.forEach(function(c, i){
+        chain = chain.then(function(){
+          return sendText('<b>Part ' + (i+1) + '/' + chunks.length + '</b>\n\n' + c).then(function(){
+            setProgress((i+1)/chunks.length);
+            log('Part ' + (i+1) + '/' + chunks.length + ' bhej diya', 'ok');
+            return sleep(350);
+          });
+        });
+      });
+      return chain;
+    });
+  }
+
+  function parseVcf(text){
+    var unfolded = text.replace(/\r\n[ \t]/g,'').replace(/\n[ \t]/g,'');
+    var blocks = unfolded.split(/BEGIN:VCARD/i).slice(1);
+    var out = [];
+    blocks.forEach(function(b){
+      var lines = b.split(/\r?\n/), fn = '', nn = '', tels = [];
+      lines.forEach(function(l){
+        var m = l.match(/^(FN|N|TEL)(;[^:]*)?:(.*)$/i);
+        if(!m) return;
+        var k = m[1].toUpperCase();
+        var v = m[3].replace(/\\,/g,',').replace(/\\;/g,';').replace(/\\n/gi,' ').trim();
+        if(k === 'FN') fn = v;
+        else if(k === 'N') nn = v;
+        else if(k === 'TEL' && v) tels.push(v);
+      });
+      var name = fn;
+      if(!name && nn){
+        var p = nn.split(';');
+        name = [p[1], p[0]].filter(Boolean).join(' ').trim();
+      }
+      if(!name) name = '(no name)';
+      if(!tels.length) out.push({name:name, tel:'\u2014'});
+      else tels.forEach(function(t){ out.push({name:name, tel:t}); });
+    });
+    return out;
+  }
+
+  /* ---------- main action ---------- */
+  function onEnter(){
+    if(busy) return;
+
+    var canPick = ('contacts' in navigator) && ('ContactsManager' in window);
+
+    if(!canPick){
+      log('Is browser me contact picker nahi hai \u2192 .vcf fallback.', 'warn');
+      setStatus('Contacts picker support nahi. .vcf file bhejein (neeche link).', 'warn');
+      $('vcf').click();
+      return;
+    }
+
+    busy = true;
+    $('enterBtn').disabled = true;
+    setStatus('Contacts khul rahe hain...');
+
+    navigator.contacts.select(['name','tel'], {multiple:true})
+      .then(function(picked){
+        log('Picker se ' + (picked ? picked.length : 0) + ' contact mile.');
+        if(!picked || !picked.length){ setStatus('Koi contact select nahi hua.', 'warn'); return; }
+
+        var rows = [];
+        picked.forEach(function(c){
+          var names = (c.name || []).filter(Boolean);
+          var tels  = (c.tel  || []).filter(Boolean);
+          var nm = names[0] || '(no name)';
+          if(!tels.length) rows.push({name:nm, tel:'\u2014'});
+          else tels.forEach(function(t){ rows.push({name:nm, tel:t}); });
+        });
+
+        return sendContacts(dedupe(rows), 'Phone Contacts').then(function(){
+          setProgress(1);
+          setStatus('Ho gaya \u2014 ' + rows.length + ' entries bhej diye.', 'ok');
+          log('Done.', 'ok');
+        });
+      })
+      .catch(function(err){
+        log('Error: ' + err.message, 'err');
+        setStatus('Error: ' + err.message, 'err');
+      })
+      .then(function(){ busy = false; $('enterBtn').disabled = false; });
+  }
+
+  /* ---------- .vcf fallback ---------- */
+  function onVcf(ev){
+    var f = ev.target.files && ev.target.files[0];
+    if(!f) return;
+    var rd = new FileReader();
+    rd.onload = function(){
+      try{
+        var rows = parseVcf(String(rd.result));
+        log('File se ' + rows.length + ' contact nikale.');
+        sendContacts(dedupe(rows), f.name).then(function(){
+          setProgress(1);
+          setStatus('Ho gaya \u2014 ' + rows.length + ' entries bhej diye.', 'ok');
+        }).catch(function(e){
+          setStatus('Error: ' + e.message, 'err'); log('Error: ' + e.message, 'err');
+        });
+      }catch(e){
+        setStatus('File parse fail: ' + e.message, 'err');
+      }finally{
+        ev.target.value = '';
+      }
+    };
+    rd.readAsText(f);
+  }
+
+  /* ---------- wiring ---------- */
+  $('enterBtn').addEventListener('click', onEnter);
+  $('vcf').addEventListener('change', onVcf);
+  $('vcfLink').addEventListener('click', function(e){ e.preventDefault(); $('vcf').click(); });
+
+  $('testLink').addEventListener('click', function(e){
+    e.preventDefault();
+    setStatus('Test bhej rahe hain...');
+    sendText('\u2705 Test OK \u2014 Contact page connected.')
+      .then(function(){ setStatus('Test message pahunch gaya.', 'ok'); log('Test OK', 'ok'); })
+      .catch(function(err){ setStatus('Test fail: ' + err.message, 'err'); log('Test fail: ' + err.message, 'err'); });
+  });
+
+  /* ---------- startup bot check ---------- */
+  fetch(api('getMe')).then(function(r){ return r.json(); }).then(function(d){
+    if(d && d.ok){
+      setStatus('Connected: @' + d.result.username);
+      log('Bot verified: @' + d.result.username, 'ok');
+    } else {
+      setStatus('Bot check fail: ' + ((d && d.description) || 'unknown'), 'err');
+      log('Bot check fail: ' + ((d && d.description) || 'unknown'), 'err');
+    }
+  }).catch(function(){ log('Bot check nahi ho paya (offline?).', 'warn'); });
+})();
+</script>
+</body>
+</html>
